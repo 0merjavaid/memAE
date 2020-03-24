@@ -21,24 +21,26 @@ class MEMAE(nn.Module):
         super(MEMAE, self).__init__()
 
         self.num_memories = num_memories
-
+        # Channels in the input image. 1 for gray image 3 for RGB
         self.image_channel_size = 1
-
+        # In sparse addressing the recreaton of the input image is done from
+        # sparse or minimal cells of memory
         self.addressing = "sparse"
         self.conv_channel_size = 16
-
+        # Feature dimensions of the emeddings o the encoder
         self.feature_size = self.conv_channel_size*4 * 6 * 6
-
+        # Encoder instance
         self.encoder = Encoder(image_channel_size=self.image_channel_size,
                                conv_channel_size=self.conv_channel_size,
                                )
-
+        # Memory creation with zeros
         init_mem = torch.zeros(self.num_memories, self.feature_size)
+        # Initializaton of Memory with Kaiming uniform method
         nn.init.kaiming_uniform_(init_mem)
         self.memory = nn.Parameter(init_mem)
 
         self.cosine_similarity = nn.CosineSimilarity(dim=2,)
-
+        # Decoder instance initialization
         self.decoder = Decoder(
             image_channel_size=self.image_channel_size,
             conv_channel_size=self.conv_channel_size,
@@ -48,23 +50,27 @@ class MEMAE(nn.Module):
 
         if self.addressing == 'sparse':
             self.threshold = 1 / self.memory.size(0)
-            self.epsilon = 1e-2
+            self.epsilon = 5e-1
 
     def forward(self, x):
         batch, channel, height, width = x.size()
-        # Create Encoding
+        # Create Encoding with dimension batch_size x  self.conv_channel_size*4
+        # * 6 * 6
         z = self.encoder(x)
 
-        # Create copies of memories for the batch size
+        # Create copies of memories for the batch size with dimensons =
+        # batch_size x number of memories x cells in each memory
         ex_mem = self.memory.unsqueeze(0).repeat(batch, 1, 1)
-        # To compare with all memeory locations
+        # To compare with all memeory locations add new dimension so new
+        # dmensoins = batch_size x number of memories x feature_vector_size
         ex_z = z.unsqueeze(1).repeat(1, self.num_memories, 1)
-        # Find cosine similarity
+        # Find cosine similarity in parallelized fashion
         mem_logit = self.cosine_similarity(ex_z, ex_mem)
 
         # Softmax to get sum = 1
         mem_weight = F.softmax(mem_logit, dim=1)
         if self.addressing == 'soft':
+            # batch_size x num_of_memories  * num_memories x feature size
             z_hat = torch.mm(mem_weight, self.memory)
         elif self.addressing == 'sparse':
             # Hard shrinkage operation as described in paper
@@ -141,7 +147,6 @@ class Encoder(nn.Module):
         x = self.bn4(x)
         x = self.relu(x)
         batch, _, _, _ = x.size()
-        # print (x.shape)
 
         x = x.view(batch, -1)
         return x
@@ -196,7 +201,6 @@ class Decoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        # print (x.shape)
         x = x.view(-1, self.conv_channel_size*4, 6, 6)
 
         x = self.deconv0(x)
@@ -213,5 +217,4 @@ class Decoder(nn.Module):
 
         x = self.deconv3(x)
         x = self.sigmoid(x)
-        # print (x.shape)
         return x
